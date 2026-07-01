@@ -44,7 +44,9 @@ public class RPHCalculatorLogic {
         }
 
         double rpm = (double) info.getTargetRph() / 60.0;
-        double requiredThreads = (rpm * (info.getIterationDurationSec() / 60.0));
+        int httpCount = Math.max(1, info.getHttpSamplersCount());
+        
+        double requiredThreads = (rpm * (info.getIterationDurationSec() / 60.0)) / httpCount;
         int threads = Math.max(1, (int) Math.ceil(requiredThreads));
 
         info.setCalculatedThreads(threads);
@@ -136,7 +138,8 @@ public class RPHCalculatorLogic {
             maxRph = Math.max(maxRph, currentRph);
 
             double currentRpm = currentRph / 60.0;
-            double requiredThreads = currentRpm * (info.getIterationDurationSec() / 60.0);
+            int httpCount = Math.max(1, info.getHttpSamplersCount());
+            double requiredThreads = (currentRpm * (info.getIterationDurationSec() / 60.0)) / httpCount;
             int currentTotalThreads = Math.max(1, (int) Math.ceil(requiredThreads));
 
             int threadsToAdd = currentTotalThreads - previousThreads;
@@ -304,7 +307,8 @@ public class RPHCalculatorLogic {
         } else {
             // If no timer, calculate the maximum possible RPH at current thread count
             if (info.getCalculatedThreads() > 0 && info.getIterationDurationSec() > 0) {
-                double maxRph = (double) info.getCalculatedThreads() * 3600.0 / info.getIterationDurationSec();
+                int httpCount = Math.max(1, info.getHttpSamplersCount());
+                double maxRph = (double) info.getCalculatedThreads() * 3600.0 * httpCount / info.getIterationDurationSec();
                 int rph = (int) Math.round(maxRph);
                 if (info.getTargetRph() <= 0) {
                     info.setTargetRph(rph);
