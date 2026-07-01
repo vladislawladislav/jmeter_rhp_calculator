@@ -18,11 +18,14 @@ import org.apache.jmeter.testelement.property.StringProperty;
 import org.apache.jmeter.threads.AbstractThreadGroup;
 import org.apache.jmeter.threads.ThreadGroup;
 import org.apache.jmeter.timers.ConstantThroughputTimer;
+import org.apache.jmeter.config.Arguments;
+import org.apache.jmeter.config.gui.ArgumentsPanel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
 import java.util.ArrayList;
+import java.util.List;
 
 public class RPHCalculatorLogic {
 
@@ -31,13 +34,12 @@ public class RPHCalculatorLogic {
     private static final String ULTIMATE_TG_PROP = "ultimatethreadgroupdata";
     private static final String PACING_ACTION_NAME = "Pacing Action";
     private static final String PACING_TIMER_NAME = "Pacing Timer";
+    private static final String TARGET_RPH_VAR_PREFIX = "rph.target.";
 
     public static void calculateForward(ThreadGroupInfo info, JTextArea logArea, GuiPackage guiPackage, int holdSec) {
         TestElement tg = info.getThreadGroup();
-        int httpCount = info.getHttpSamplersCount();
-        if (httpCount <= 0) {
+        if (info.getHttpSamplersCount() <= 0) {
             logArea.append("WARNING: No HTTP samplers found in '" + info.getName() + "'. Assuming 1.\n");
-            httpCount = 1;
             info.setHttpSamplersCount(1);
         }
 
@@ -46,6 +48,7 @@ public class RPHCalculatorLogic {
         int threads = Math.max(1, (int) Math.ceil(requiredThreads));
 
         info.setCalculatedThreads(threads);
+        info.setActualRph(info.getTargetRph());
 
         updateThreadGroupProperties(tg, info, threads, holdSec, logArea);
 
@@ -53,6 +56,53 @@ public class RPHCalculatorLogic {
                 info.getName(), info.getTargetRph(), rpm, threads));
 
         addOrUpdatePacingElements(info, tg, logArea, guiPackage, rpm);
+    }
+
+    public static void saveTargetRphToVariables(ThreadGroupInfo info, GuiPackage guiPackage) {
+        String varName = TARGET_RPH_VAR_PREFIX + info.getName().replaceAll("[^a-zA-Z0-9.-]", "_");
+        
+        List<JMeterTreeNode> udvNodes = guiPackage.getTreeModel().getNodesOfType(Arguments.class);
+        Arguments udv;
+        JMeterTreeNode nodeToUpdate;
+
+        if (udvNodes.isEmpty()) {
+            udv = new Arguments();
+            udv.setName("User Defined Variables (RPH Targets)");
+            udv.setProperty(TestElement.GUI_CLASS, ArgumentsPanel.class.getName());
+            udv.setProperty(TestElement.TEST_CLASS, Arguments.class.getName());
+            try {
+                JMeterTreeNode testPlanNode = (JMeterTreeNode) guiPackage.getTreeModel().getRoot();
+                nodeToUpdate = guiPackage.getTreeModel().addComponent(udv, testPlanNode);
+            } catch (IllegalUserActionException e) {
+                log.error("Failed to create UDV for RPH Targets", e);
+                return;
+            }
+        } else {
+            nodeToUpdate = udvNodes.get(0);
+            udv = (Arguments) nodeToUpdate.getTestElement();
+        }
+
+        // Update existing or add new
+        udv.removeArgument(varName);
+        udv.addArgument(varName, String.valueOf(info.getTargetRph()));
+        guiPackage.getTreeModel().nodeChanged(nodeToUpdate);
+    }
+
+    private static int loadTargetRphFromVariables(String tgName, GuiPackage guiPackage) {
+        String varName = TARGET_RPH_VAR_PREFIX + tgName.replaceAll("[^a-zA-Z0-9.-]", "_");
+        List<JMeterTreeNode> udvNodes = guiPackage.getTreeModel().getNodesOfType(Arguments.class);
+        for (JMeterTreeNode node : udvNodes) {
+            Arguments udv = (Arguments) node.getTestElement();
+            String value = udv.getArgumentsAsMap().get(varName);
+            if (value != null) {
+                try {
+                    return Integer.parseInt(value);
+                } catch (NumberFormatException e) {
+                    log.warn("Could not parse target RPH from variable {}", varName);
+                }
+            }
+        }
+        return 0;
     }
 
     public static void generateStepUpSchedule(ThreadGroupInfo info, JTextArea logArea, GuiPackage guiPackage,
@@ -65,7 +115,7 @@ public class RPHCalculatorLogic {
 
         double baseRph = info.getTargetRph();
         if (baseRph <= 0) {
-            logArea.append("WARNING: Base Target RPH is 0 or less for '" + info.getName() + "'. Cannot generate Step-up.\n");
+            logArea.append("WARNING: Target RPH is 0 or less for '" + info.getName() + "'. Cannot generate Step-up.\n");
             return;
         }
 
@@ -226,6 +276,11 @@ public class RPHCalculatorLogic {
         restoreThreadGroupProperties(tg, info);
 
         ConstantThroughputTimer timer = findPacingTimer(tg, guiPackage);
+        
+        int storedTarget = loadTargetRphFromVariables(info.getName(), guiPackage);
+        if (storedTarget > 0) {
+            info.setTargetRph(storedTarget);
+        }
 
         if (timer != null) {
             double rpm = timer.getPropertyAsDouble(ConstantThroughputTimer.THROUGHPUT);
@@ -238,20 +293,28 @@ public class RPHCalculatorLogic {
                 totalRph = rpm * 60;
             }
             
-            info.setTargetRph((int) Math.round(totalRph));
+            int rph = (int) Math.round(totalRph);
+            if (info.getTargetRph() <= 0) {
+                info.setTargetRph(rph);
+            }
+            info.setActualRph(rph);
             info.setHasTimer(true);
             logArea.append(String.format("'%s': Reversed from Pacing Timer. Current: %d RPH (%.1f RPM)\n",
-                    info.getName(), info.getTargetRph(), rpm));
+                    info.getName(), info.getActualRph(), rpm));
         } else {
             // If no timer, calculate the maximum possible RPH at current thread count
             if (info.getCalculatedThreads() > 0 && info.getIterationDurationSec() > 0) {
                 double maxRph = (double) info.getCalculatedThreads() * 3600.0 / info.getIterationDurationSec();
-                info.setTargetRph((int) Math.round(maxRph));
+                int rph = (int) Math.round(maxRph);
+                if (info.getTargetRph() <= 0) {
+                    info.setTargetRph(rph);
+                }
+                info.setActualRph(rph);
             } else {
-                info.setTargetRph(0);
+                info.setActualRph(0);
             }
             info.setHasTimer(false);
-            logArea.append("'" + info.getName() + "': No Pacing Timer found. Max capacity: " + info.getTargetRph() + " RPH\n");
+            logArea.append("'" + info.getName() + "': No Pacing Timer found. Max capacity: " + info.getActualRph() + " RPH\n");
         }
     }
 

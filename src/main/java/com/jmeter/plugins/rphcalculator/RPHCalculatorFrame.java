@@ -15,6 +15,8 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.stream.Collectors;
 
 public class RPHCalculatorFrame extends JFrame {
@@ -41,7 +43,7 @@ public class RPHCalculatorFrame extends JFrame {
     private static final String PROP_STEPUP_RAMP = "rph_plugin.stepup.rampup";
 
     private static final String[] COLUMN_NAMES = {
-            "Thread Group", "Target RPH", "Iteration Duration (sec)",
+            "Thread Group", "Target RPH", "Actual RPH", "Iteration Duration (sec)",
             "Ramp-up (sec)", "Hold (sec)", "Ramp-down (sec)",
             "HTTP Samplers", "Calc. Threads", "Interval (ms)"
     };
@@ -88,7 +90,7 @@ public class RPHCalculatorFrame extends JFrame {
         tableModel = new DefaultTableModel(COLUMN_NAMES, 0) {
             @Override
             public boolean isCellEditable(int row, int col) {
-                return col >= 1 && col <= 5;
+                return col >= 1 && col <= 6;
             }
         };
         table = new JTable(tableModel);
@@ -185,6 +187,13 @@ public class RPHCalculatorFrame extends JFrame {
 
     private void refreshTable() {
         guiPackage.updateCurrentNode();
+        
+        // Preserve existing target RPHs
+        Map<String, Integer> targetRphMap = new java.util.HashMap<>();
+        for (ThreadGroupInfo oldInfo : threadGroupInfos) {
+            targetRphMap.put(oldInfo.getName(), oldInfo.getTargetRph());
+        }
+
         threadGroupInfos.clear();
         tableModel.setRowCount(0);
         logArea.setText("");
@@ -199,11 +208,14 @@ public class RPHCalculatorFrame extends JFrame {
 
         for (TestElement tg : groups) {
             ThreadGroupInfo info = new ThreadGroupInfo(tg, tg.getName());
+            if (targetRphMap.containsKey(info.getName())) {
+                info.setTargetRph(targetRphMap.get(info.getName()));
+            }
             info.setHttpSamplersCount(RPHCalculatorLogic.countHttpSamplers(tg, guiPackage));
             RPHCalculatorLogic.calculateReverse(info, logArea, guiPackage);
             threadGroupInfos.add(info);
             tableModel.addRow(new Object[]{
-                    info.getName(), info.getTargetRph(), info.getIterationDurationSec(),
+                    info.getName(), info.getTargetRph(), info.getActualRph(), info.getIterationDurationSec(),
                     info.getRampUpSec(), info.getHoldSec(), info.getRampDownSec(),
                     info.getHttpSamplersCount(), info.getCalculatedThreads(), "—"
             });
@@ -223,6 +235,7 @@ public class RPHCalculatorFrame extends JFrame {
             try {
                 updateInfoFromTable(info, rowIdx);
                 RPHCalculatorLogic.calculateForward(info, logArea, guiPackage, info.getHoldSec());
+                RPHCalculatorLogic.saveTargetRphToVariables(info, guiPackage);
                 updateTableFromInfo(info, rowIdx);
                 successCount++;
             } catch (Exception e) {
@@ -233,6 +246,7 @@ public class RPHCalculatorFrame extends JFrame {
     }
 
     private void generateStabilityTest() {
+        guiPackage.updateCurrentNode();
         int[] selectedRows = getSelectedRowsWithWarning();
         if (selectedRows.length == 0) return;
 
@@ -246,10 +260,17 @@ public class RPHCalculatorFrame extends JFrame {
                 ThreadGroupInfo info = threadGroupInfos.get(rowIdx);
                 try {
                     updateInfoFromTable(info, rowIdx);
-                    int originalRph = info.getTargetRph();
-                    info.setTargetRph((int) (originalRph * (loadPct / 100.0)));
+                    int originalActual = info.getActualRph();
+                    int originalTarget = info.getTargetRph();
+                    int baseForCalculation = originalTarget > 0 ? originalTarget : originalActual;
+                    
+                    int stabilityTarget = (int) Math.round(baseForCalculation * (loadPct / 100.0));
+                    info.setTargetRph(stabilityTarget);
+                    
                     RPHCalculatorLogic.calculateForward(info, logArea, guiPackage, duration);
-                    info.setTargetRph(originalRph);
+                    
+                    info.setTargetRph(originalTarget); // Restore original target
+                    info.setActualRph(originalActual); // UI will be updated via updateTableFromInfo
                     updateTableFromInfo(info, rowIdx);
                     successCount++;
                 } catch (Exception e) {
@@ -263,6 +284,7 @@ public class RPHCalculatorFrame extends JFrame {
     }
 
     private void generateStepUpTest() {
+        guiPackage.updateCurrentNode();
         int[] selectedRows = getSelectedRowsWithWarning();
         if (selectedRows.length == 0) return;
 
@@ -302,10 +324,11 @@ public class RPHCalculatorFrame extends JFrame {
 
     private void updateInfoFromTable(ThreadGroupInfo info, int rowIdx) {
         info.setTargetRph(getIntegerFromTable(rowIdx, 1));
-        info.setIterationDurationSec(getDoubleFromTable(rowIdx, 2));
-        info.setRampUpSec(getIntegerFromTable(rowIdx, 3));
-        info.setHoldSec(getIntegerFromTable(rowIdx, 4));
-        info.setRampDownSec(getIntegerFromTable(rowIdx, 5));
+        info.setActualRph(getIntegerFromTable(rowIdx, 2));
+        info.setIterationDurationSec(getDoubleFromTable(rowIdx, 3));
+        info.setRampUpSec(getIntegerFromTable(rowIdx, 4));
+        info.setHoldSec(getIntegerFromTable(rowIdx, 5));
+        info.setRampDownSec(getIntegerFromTable(rowIdx, 6));
     }
 
     private int getIntegerFromTable(int row, int col) {
@@ -331,8 +354,10 @@ public class RPHCalculatorFrame extends JFrame {
     }
 
     private void updateTableFromInfo(ThreadGroupInfo info, int rowIdx) {
-        tableModel.setValueAt(info.getCalculatedThreads(), rowIdx, 7);
-        tableModel.setValueAt(String.format("%.0f", info.getCalculatedIntervalMs()), rowIdx, 8);
+        tableModel.setValueAt(info.getTargetRph(), rowIdx, 1);
+        tableModel.setValueAt(info.getActualRph(), rowIdx, 2);
+        tableModel.setValueAt(info.getCalculatedThreads(), rowIdx, 8);
+        tableModel.setValueAt(String.format("%.0f", info.getCalculatedIntervalMs()), rowIdx, 9);
     }
 
     private void handleRowError(int rowIdx, String name, Exception e) {

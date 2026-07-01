@@ -7,6 +7,7 @@ public class ThreadGroupInfo {
     private final TestElement threadGroup;
     private final String name;
     private int targetRph;
+    private int actualRph;
     private double iterationDurationSec;
     private int rampUpSec;
     private int holdSec; // Возвращаем для сохранения оригинального времени
@@ -20,6 +21,7 @@ public class ThreadGroupInfo {
         this.threadGroup = tg;
         this.name = name;
         this.targetRph = 0;
+        this.actualRph = 0;
         this.iterationDurationSec = 10;
         this.rampUpSec = 30;
         this.holdSec = 3600; // Дефолтное значение
@@ -34,6 +36,8 @@ public class ThreadGroupInfo {
     public String getName() { return name; }
     public int getTargetRph() { return targetRph; }
     public void setTargetRph(int v) { this.targetRph = v; }
+    public int getActualRph() { return actualRph; }
+    public void setActualRph(int v) { this.actualRph = v; }
     public double getIterationDurationSec() { return iterationDurationSec; }
     public void setIterationDurationSec(double v) { this.iterationDurationSec = v; }
     public int getRampUpSec() { return rampUpSec; }
