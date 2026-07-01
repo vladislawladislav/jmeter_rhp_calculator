@@ -107,8 +107,39 @@ public class RPHCalculatorFrame extends JFrame {
         applyBaseButton.addActionListener(e -> calculateAndApplyBase());
         controlPanel.add(applyBaseButton);
 
+        JButton saveOnlyButton = new JButton("Save Settings & Sync");
+        saveOnlyButton.setToolTipText("Save Target RPH, Duration and Thread Group timings without changing load/threads");
+        saveOnlyButton.addActionListener(e -> saveSettingsOnly());
+        controlPanel.add(saveOnlyButton);
+
         panel.add(controlPanel, BorderLayout.SOUTH);
         return panel;
+    }
+
+    private void saveSettingsOnly() {
+        guiPackage.updateCurrentNode();
+        int[] selectedRows = getSelectedRowsWithWarning();
+        if (selectedRows.length == 0) return;
+
+        logArea.setText("Saving settings for selected Thread Groups...\n");
+        int successCount = 0;
+        for (int rowIdx : selectedRows) {
+            ThreadGroupInfo info = threadGroupInfos.get(rowIdx);
+            try {
+                updateInfoFromTable(info, rowIdx);
+                // Save to variables
+                RPHCalculatorLogic.saveTargetRphToVariables(info, guiPackage);
+                // Update Thread Group timings (ramp-up, etc.) without touching threads
+                RPHCalculatorLogic.syncThreadGroupTimings(info, logArea);
+                
+                updateTableFromInfo(info, rowIdx);
+                successCount++;
+                logArea.append("'" + info.getName() + "': Settings saved and synced.\n");
+            } catch (Exception e) {
+                handleRowError(rowIdx, info.getName(), e);
+            }
+        }
+        postActionUpdate(successCount);
     }
 
     private JPanel createStabilityTestPanel() {
@@ -207,17 +238,20 @@ public class RPHCalculatorFrame extends JFrame {
         }
 
         for (TestElement tg : groups) {
+            int httpCount = RPHCalculatorLogic.countHttpSamplers(tg, guiPackage);
+            logArea.append(String.format("'%s': Found %d samplers.\n", tg.getName(), httpCount));
+            
             ThreadGroupInfo info = new ThreadGroupInfo(tg, tg.getName());
             if (targetRphMap.containsKey(info.getName())) {
                 info.setTargetRph(targetRphMap.get(info.getName()));
             }
-            info.setHttpSamplersCount(RPHCalculatorLogic.countHttpSamplers(tg, guiPackage));
+            info.setHttpSamplersCount(httpCount);
             RPHCalculatorLogic.calculateReverse(info, logArea, guiPackage);
             threadGroupInfos.add(info);
             tableModel.addRow(new Object[]{
                     info.getName(), info.getTargetRph(), info.getActualRph(), info.getIterationDurationSec(),
                     info.getRampUpSec(), info.getHoldSec(), info.getRampDownSec(),
-                    info.getHttpSamplersCount(), info.getCalculatedThreads(), "—"
+                    httpCount, info.getCalculatedThreads(), "—"
             });
         }
         logArea.append("Found " + groups.size() + " Thread Group(s).\n");
@@ -269,8 +303,8 @@ public class RPHCalculatorFrame extends JFrame {
                     
                     RPHCalculatorLogic.calculateForward(info, logArea, guiPackage, duration);
                     
-                    info.setTargetRph(originalTarget); // Restore original target
-                    info.setActualRph(originalActual); // UI will be updated via updateTableFromInfo
+                    info.setTargetRph(originalTarget); // Restore original target (the reference)
+                    // info.setActualRph is already set to stabilityTarget by calculateForward
                     updateTableFromInfo(info, rowIdx);
                     successCount++;
                 } catch (Exception e) {
@@ -356,6 +390,7 @@ public class RPHCalculatorFrame extends JFrame {
     private void updateTableFromInfo(ThreadGroupInfo info, int rowIdx) {
         tableModel.setValueAt(info.getTargetRph(), rowIdx, 1);
         tableModel.setValueAt(info.getActualRph(), rowIdx, 2);
+        tableModel.setValueAt(info.getIterationDurationSec(), rowIdx, 3);
         tableModel.setValueAt(info.getCalculatedThreads(), rowIdx, 8);
         tableModel.setValueAt(String.format("%.0f", info.getCalculatedIntervalMs()), rowIdx, 9);
     }
