@@ -8,9 +8,12 @@ import org.apache.jmeter.protocol.http.sampler.HTTPSamplerProxy;
 import org.apache.jmeter.sampler.TestAction;
 import org.apache.jmeter.testbeans.gui.TestBeanGUI;
 import org.apache.jmeter.testelement.TestElement;
+import org.apache.jmeter.testelement.property.BooleanProperty;
 import org.apache.jmeter.testelement.property.CollectionProperty;
 import org.apache.jmeter.testelement.property.DoubleProperty;
+import org.apache.jmeter.testelement.property.IntegerProperty;
 import org.apache.jmeter.testelement.property.JMeterProperty;
+import org.apache.jmeter.testelement.property.LongProperty;
 import org.apache.jmeter.testelement.property.StringProperty;
 import org.apache.jmeter.threads.AbstractThreadGroup;
 import org.apache.jmeter.threads.ThreadGroup;
@@ -19,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
+import java.util.ArrayList;
 
 public class RPHCalculatorLogic {
 
@@ -119,11 +123,14 @@ public class RPHCalculatorLogic {
         String className = tg.getClass().getName();
         if (className.equals(ULTIMATE_TG_CLASS)) {
             JMeterProperty scheduleProp = tg.getProperty(ULTIMATE_TG_PROP);
+            CollectionProperty schedule;
             if (!(scheduleProp instanceof CollectionProperty)) {
-                logArea.append("ERROR: Cannot find or access schedule for '" + info.getName() + "'.\n");
-                return;
+                log.info("Creating new schedule property for '{}'", info.getName());
+                schedule = new CollectionProperty(ULTIMATE_TG_PROP, new ArrayList<>());
+                tg.setProperty(schedule);
+            } else {
+                schedule = (CollectionProperty) scheduleProp;
             }
-            CollectionProperty schedule = (CollectionProperty) scheduleProp;
             schedule.clear();
 
             CollectionProperty newRow = new CollectionProperty();
@@ -136,10 +143,10 @@ public class RPHCalculatorLogic {
 
             schedule.addProperty(newRow);
         } else if (tg instanceof ThreadGroup) {
-            tg.setProperty(ThreadGroup.NUM_THREADS, String.valueOf(threads));
-            tg.setProperty(ThreadGroup.RAMP_TIME, String.valueOf(info.getRampUpSec()));
-            tg.setProperty(ThreadGroup.SCHEDULER, true);
-            tg.setProperty(ThreadGroup.DURATION, String.valueOf(holdSec));
+            tg.setProperty(new IntegerProperty(ThreadGroup.NUM_THREADS, threads));
+            tg.setProperty(new IntegerProperty(ThreadGroup.RAMP_TIME, info.getRampUpSec()));
+            tg.setProperty(new BooleanProperty(ThreadGroup.SCHEDULER, true));
+            tg.setProperty(new LongProperty(ThreadGroup.DURATION, (long) holdSec));
 
             TestElement controller = ((AbstractThreadGroup) tg).getSamplerController();
             if (controller instanceof LoopController) {
@@ -153,7 +160,8 @@ public class RPHCalculatorLogic {
         timer.setProperty(TestElement.GUI_CLASS, TestBeanGUI.class.getName());
         timer.setProperty(TestElement.TEST_CLASS, ConstantThroughputTimer.class.getName());
         timer.setName(PACING_TIMER_NAME);
-        timer.setProperty(ConstantThroughputTimer.CALC_MODE, 1);
+        // Mode 2: All active threads in current thread group
+        timer.setProperty(new IntegerProperty(ConstantThroughputTimer.CALC_MODE, 2));
         // Correct way to set a double property in JMeter
         timer.setProperty(new DoubleProperty(ConstantThroughputTimer.THROUGHPUT, rpm));
         timer.setEnabled(true);
@@ -204,6 +212,13 @@ public class RPHCalculatorLogic {
         }
 
         info.setHasTimer(true);
+
+        // Notify tree and update GUI
+        guiPackage.getTreeModel().nodeChanged(parentNode);
+        if (guiPackage.getCurrentNode() == parentNode) {
+            guiPackage.getCurrentGui().configure(tg);
+        }
+        guiPackage.getMainFrame().repaint();
     }
 
     public static void calculateReverse(ThreadGroupInfo info, JTextArea logArea, GuiPackage guiPackage) {
@@ -214,18 +229,29 @@ public class RPHCalculatorLogic {
 
         if (timer != null) {
             double rpm = timer.getPropertyAsDouble(ConstantThroughputTimer.THROUGHPUT);
+            int mode = timer.getPropertyAsInt(ConstantThroughputTimer.CALC_MODE, 0);
+            
+            double totalRph;
+            if (mode == 0) { // This thread only
+                totalRph = rpm * 60 * info.getCalculatedThreads();
+            } else { // All active threads (various sharing modes)
+                totalRph = rpm * 60;
+            }
+            
+            info.setTargetRph((int) Math.round(totalRph));
+            info.setHasTimer(true);
+            logArea.append(String.format("'%s': Reversed from Pacing Timer. Current: %d RPH (%.1f RPM)\n",
+                    info.getName(), info.getTargetRph(), rpm));
+        } else {
+            // If no timer, calculate the maximum possible RPH at current thread count
             if (info.getCalculatedThreads() > 0 && info.getIterationDurationSec() > 0) {
-                double rph = (double) info.getCalculatedThreads() * 60.0 / (info.getIterationDurationSec() / 60.0);
-                info.setTargetRph((int) Math.round(rph));
+                double maxRph = (double) info.getCalculatedThreads() * 3600.0 / info.getIterationDurationSec();
+                info.setTargetRph((int) Math.round(maxRph));
             } else {
                 info.setTargetRph(0);
             }
-            info.setHasTimer(true);
-            logArea.append(String.format("'%s': Reversed from threads. Current threads: %d → %d RPH\n",
-                    info.getName(), info.getCalculatedThreads(), info.getTargetRph()));
-        } else {
             info.setHasTimer(false);
-            logArea.append("'" + info.getName() + "': No Pacing Timer found. Current threads: " + info.getCalculatedThreads() + "\n");
+            logArea.append("'" + info.getName() + "': No Pacing Timer found. Max capacity: " + info.getTargetRph() + " RPH\n");
         }
     }
 
@@ -316,15 +342,19 @@ public class RPHCalculatorLogic {
     }
 
     public static int countHttpSamplers(TestElement parent, GuiPackage guiPackage) {
-        int count = 0;
         JMeterTreeNode parentNode = guiPackage.getTreeModel().getNodeOf(parent);
-        if (parentNode != null) {
-            for (int i = 0; i < parentNode.getChildCount(); i++) {
-                JMeterTreeNode childNode = (JMeterTreeNode) parentNode.getChildAt(i);
-                if (childNode.getTestElement() instanceof HTTPSamplerProxy) {
-                    count++;
-                }
+        if (parentNode == null) return 0;
+        return countHttpSamplersInNode(parentNode);
+    }
+
+    private static int countHttpSamplersInNode(JMeterTreeNode node) {
+        int count = 0;
+        for (int i = 0; i < node.getChildCount(); i++) {
+            JMeterTreeNode child = (JMeterTreeNode) node.getChildAt(i);
+            if (child.getTestElement() instanceof HTTPSamplerProxy) {
+                count++;
             }
+            count += countHttpSamplersInNode(child);
         }
         return count;
     }

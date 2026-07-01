@@ -184,6 +184,7 @@ public class RPHCalculatorFrame extends JFrame {
     }
 
     private void refreshTable() {
+        guiPackage.updateCurrentNode();
         threadGroupInfos.clear();
         tableModel.setRowCount(0);
         logArea.setText("");
@@ -211,6 +212,7 @@ public class RPHCalculatorFrame extends JFrame {
     }
 
     private void calculateAndApplyBase() {
+        guiPackage.updateCurrentNode();
         int[] selectedRows = getSelectedRowsWithWarning();
         if (selectedRows.length == 0) return;
 
