@@ -5,7 +5,6 @@ import org.apache.jmeter.exceptions.IllegalUserActionException;
 import org.apache.jmeter.gui.GuiPackage;
 import org.apache.jmeter.gui.tree.JMeterTreeNode;
 import org.apache.jmeter.protocol.http.sampler.HTTPSamplerProxy;
-import org.apache.jmeter.samplers.Sampler;
 import org.apache.jmeter.sampler.TestAction;
 import org.apache.jmeter.testbeans.gui.TestBeanGUI;
 import org.apache.jmeter.testelement.TestElement;
@@ -492,11 +491,12 @@ public class RPHCalculatorLogic {
         for (int i = 0; i < node.getChildCount(); i++) {
             JMeterTreeNode child = (JMeterTreeNode) node.getChildAt(i);
             TestElement te = child.getTestElement();
-            if (te instanceof Sampler) {
-                // Ignore our own pacing action
-                if (!(te instanceof TestAction && PACING_ACTION_NAME.equals(te.getName()))) {
-                    count++;
-                }
+            // Skip disabled elements (sampler/controller/etc.) along with their whole subtree
+            if (!te.isEnabled()) {
+                continue;
+            }
+            if (te instanceof HTTPSamplerProxy) {
+                count++;
             }
             count += countHttpSamplersInNode(child);
         }
