@@ -55,6 +55,7 @@ public class RPHCalculatorLogic {
 
         info.setCalculatedThreads(threads);
         info.setActualRph(info.getTargetRph());
+        info.setCalculatedIntervalMs(3600000.0 / Math.max(1, info.getTargetRph()));
 
         updateThreadGroupProperties(tg, info, threads, holdSec, logArea);
 
@@ -189,12 +190,14 @@ public class RPHCalculatorLogic {
                 newRow.addProperty(new StringProperty("4", String.valueOf(info.getRampDownSec())));
 
                 schedule.addProperty(newRow);
+                rowsAdded++;
             }
             previousThreads = currentTotalThreads;
         }
 
         info.setCalculatedThreads(previousThreads);
         info.setActualRph((int) Math.round(maxRph));
+        info.setCalculatedIntervalMs(3600000.0 / Math.max(1, Math.round(maxRph)));
 
         double maxRpm = maxRph / 60.0;
         int httpCountFinal = Math.max(1, info.getHttpSamplersCount());
@@ -223,6 +226,7 @@ public class RPHCalculatorLogic {
             }
         } else if (tg instanceof ThreadGroup) {
             tg.setProperty(new IntegerProperty(ThreadGroup.RAMP_TIME, info.getRampUpSec()));
+            tg.setProperty(new BooleanProperty(ThreadGroup.SCHEDULER, true));
             tg.setProperty(new LongProperty(ThreadGroup.DURATION, (long) info.getHoldSec()));
         }
     }
@@ -371,6 +375,7 @@ public class RPHCalculatorLogic {
                 info.setTargetRph(rph);
             }
             info.setActualRph(rph);
+            info.setCalculatedIntervalMs(3600000.0 / Math.max(1, rph));
             info.setHasTimer(true);
             logArea.append(String.format("'%s': Reversed from Pacing Timer. Current: %d RPH (%.1f RPM)\n",
                     info.getName(), info.getActualRph(), rpm));
@@ -383,6 +388,7 @@ public class RPHCalculatorLogic {
                     info.setTargetRph(rph);
                 }
                 info.setActualRph(rph);
+                info.setCalculatedIntervalMs(3600000.0 / Math.max(1, rph));
             } else {
                 info.setActualRph(0);
             }
