@@ -1,6 +1,7 @@
 package com.jmeter.plugins.rphcalculator;
 
 import org.apache.jmeter.control.LoopController;
+import org.apache.jmeter.control.ModuleController;
 import org.apache.jmeter.exceptions.IllegalUserActionException;
 import org.apache.jmeter.gui.GuiPackage;
 import org.apache.jmeter.gui.tree.JMeterTreeNode;
@@ -40,25 +41,20 @@ public class RPHCalculatorLogic {
     public static void calculateForward(ThreadGroupInfo info, JTextArea logArea, GuiPackage guiPackage, int holdSec) {
         TestElement tg = info.getThreadGroup();
         
-        // Use manual count if provided in the table, otherwise auto-count
-        int httpCount = info.getHttpSamplersCount();
-        if (httpCount <= 0) {
-            httpCount = countHttpSamplers(tg, guiPackage);
-            if (httpCount <= 0) {
-                logArea.append("WARNING: No samplers found in '" + info.getName() + "'. Assuming 1.\n");
-                httpCount = 1;
-            }
-            info.setHttpSamplersCount(httpCount);
+        // Always recount samplers from tree to be sure we use latest structure
+        int actualSamplers = countHttpSamplers(tg, guiPackage);
+        if (actualSamplers > 0) {
+            info.setHttpSamplersCount(actualSamplers);
         }
+        
+        // Ensure softCalculate uses current Actual RPH and current samplers
+        softCalculate(info);
+
+        int threads = info.getCalculatedThreads();
+        int httpCount = Math.max(1, info.getHttpSamplersCount());
 
         double rpm = (double) info.getActualRph() / 60.0;
         double iterMin = info.getIterationDurationSec() / 60.0;
-        
-        double requiredThreads = (rpm * iterMin) / httpCount;
-        int threads = Math.max(1, (int) Math.ceil(requiredThreads));
-
-        info.setCalculatedThreads(threads);
-        info.setCalculatedIntervalMs(3600000.0 / Math.max(1, info.getActualRph()));
 
         updateThreadGroupProperties(tg, info, threads, holdSec, logArea);
 
@@ -238,13 +234,13 @@ public class RPHCalculatorLogic {
     }
 
     public static void softCalculate(ThreadGroupInfo info) {
-        double rpm = (double) info.getTargetRph() / 60.0;
+        double rpm = (double) info.getActualRph() / 60.0;
         int httpCount = Math.max(1, info.getHttpSamplersCount());
         double iterMin = info.getIterationDurationSec() / 60.0;
         
         double requiredThreads = (rpm * iterMin) / httpCount;
         info.setCalculatedThreads(Math.max(1, (int) Math.ceil(requiredThreads)));
-        info.setCalculatedIntervalMs(3600000.0 / Math.max(1, info.getTargetRph()));
+        info.setCalculatedIntervalMs(3600000.0 / Math.max(1, info.getActualRph()));
     }
 
     private static void updateThreadGroupProperties(TestElement tg, ThreadGroupInfo info, int threads, int holdSec, JTextArea logArea) {
@@ -513,13 +509,23 @@ public class RPHCalculatorLogic {
         for (int i = 0; i < node.getChildCount(); i++) {
             JMeterTreeNode child = (JMeterTreeNode) node.getChildAt(i);
             TestElement te = child.getTestElement();
-            // Skip disabled elements (sampler/controller/etc.) along with their whole subtree
+            
+            // Skip disabled elements along with their whole subtree
             if (!te.isEnabled()) {
                 continue;
             }
+
             if (te instanceof HTTPSamplerProxy) {
                 count++;
+            } else if (te instanceof ModuleController) {
+                ModuleController mc = (ModuleController) te;
+                JMeterTreeNode targetNode = (JMeterTreeNode) mc.getSelectedNode();
+                if (targetNode != null) {
+                    // Recursive count in the target fragment/node
+                    count += countHttpSamplersInNode(targetNode);
+                }
             }
+
             count += countHttpSamplersInNode(child);
         }
         return count;
