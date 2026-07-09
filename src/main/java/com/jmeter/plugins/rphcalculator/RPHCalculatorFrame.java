@@ -66,8 +66,35 @@ public class RPHCalculatorFrame extends JFrame {
         });
     }
 
+    private String getVersionInfo() {
+        try (java.io.InputStream is = getClass().getResourceAsStream("/version.properties")) {
+            if (is != null) {
+                java.util.Properties props = new java.util.Properties();
+                props.load(is);
+                String ver = props.getProperty("version", "1.0.0");
+                String date = props.getProperty("build.date", "");
+                return ver + (date.isEmpty() ? "" : " (" + date + ")");
+            }
+        } catch (Exception e) {
+            log.error("Failed to load version", e);
+        }
+        return "1.0.0";
+    }
+
     private void initComponents() {
         setLayout(new BorderLayout(10, 10));
+        
+        // Header with title and version
+        JPanel headerPanel = new JPanel(new BorderLayout());
+        JLabel titleLabel = new JLabel(" RPH Calculator & Thread Group Configurator");
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
+        JLabel versionLabel = new JLabel("v" + getVersionInfo() + " ");
+        versionLabel.setFont(new Font("SansSerif", Font.ITALIC, 11));
+        versionLabel.setForeground(Color.GRAY);
+        headerPanel.add(titleLabel, BorderLayout.WEST);
+        headerPanel.add(versionLabel, BorderLayout.EAST);
+        add(headerPanel, BorderLayout.NORTH);
+
         JTabbedPane tabbedPane = new JTabbedPane();
         tabbedPane.addTab("1. Base Configuration", createBaseConfigPanel());
         tabbedPane.addTab("2. Stability Test", createStabilityTestPanel());
@@ -82,7 +109,7 @@ public class RPHCalculatorFrame extends JFrame {
         mainPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         mainPanel.add(tabbedPane, BorderLayout.CENTER);
         mainPanel.add(logScroll, BorderLayout.SOUTH);
-        setContentPane(mainPanel);
+        add(mainPanel, BorderLayout.CENTER);
     }
 
     private JPanel createBaseConfigPanel() {
@@ -90,7 +117,7 @@ public class RPHCalculatorFrame extends JFrame {
         tableModel = new DefaultTableModel(COLUMN_NAMES, 0) {
             @Override
             public boolean isCellEditable(int row, int col) {
-                return col >= 1 && col <= 6;
+                return col >= 1 && col <= 8;
             }
         };
         table = new JTable(tableModel);
@@ -131,6 +158,9 @@ public class RPHCalculatorFrame extends JFrame {
                 RPHCalculatorLogic.saveTargetRphToVariables(info, guiPackage);
                 // Update Thread Group timings (ramp-up, etc.) without touching threads
                 RPHCalculatorLogic.syncThreadGroupTimings(info, logArea);
+                
+                // Recalculate threads for display only
+                RPHCalculatorLogic.softCalculate(info);
                 
                 updateTableFromInfo(info, rowIdx);
                 successCount++;
@@ -299,12 +329,12 @@ public class RPHCalculatorFrame extends JFrame {
                     int baseForCalculation = originalTarget > 0 ? originalTarget : originalActual;
                     
                     int stabilityTarget = (int) Math.round(baseForCalculation * (loadPct / 100.0));
-                    info.setTargetRph(stabilityTarget);
+                    info.setActualRph(stabilityTarget);
                     
                     RPHCalculatorLogic.calculateForward(info, logArea, guiPackage, duration);
                     
-                    info.setTargetRph(originalTarget); // Restore original target (the reference)
-                    // info.setActualRph is already set to stabilityTarget by calculateForward
+                    info.setTargetRph(originalTarget); // Restore original target
+                    info.setActualRph(originalActual); // Restore original actual for table display
                     updateTableFromInfo(info, rowIdx);
                     successCount++;
                 } catch (Exception e) {
@@ -363,6 +393,8 @@ public class RPHCalculatorFrame extends JFrame {
         info.setRampUpSec(getIntegerFromTable(rowIdx, 4));
         info.setHoldSec(getIntegerFromTable(rowIdx, 5));
         info.setRampDownSec(getIntegerFromTable(rowIdx, 6));
+        info.setHttpSamplersCount(getIntegerFromTable(rowIdx, 7));
+        info.setCalculatedThreads(getIntegerFromTable(rowIdx, 8));
     }
 
     private int getIntegerFromTable(int row, int col) {
@@ -391,6 +423,7 @@ public class RPHCalculatorFrame extends JFrame {
         tableModel.setValueAt(info.getTargetRph(), rowIdx, 1);
         tableModel.setValueAt(info.getActualRph(), rowIdx, 2);
         tableModel.setValueAt(info.getIterationDurationSec(), rowIdx, 3);
+        tableModel.setValueAt(info.getHttpSamplersCount(), rowIdx, 7);
         tableModel.setValueAt(info.getCalculatedThreads(), rowIdx, 8);
         tableModel.setValueAt(String.format("%.0f", info.getCalculatedIntervalMs()), rowIdx, 9);
     }

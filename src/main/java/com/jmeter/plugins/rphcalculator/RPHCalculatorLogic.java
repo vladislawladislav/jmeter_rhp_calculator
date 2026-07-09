@@ -40,27 +40,30 @@ public class RPHCalculatorLogic {
     public static void calculateForward(ThreadGroupInfo info, JTextArea logArea, GuiPackage guiPackage, int holdSec) {
         TestElement tg = info.getThreadGroup();
         
-        int httpCount = countHttpSamplers(tg, guiPackage);
+        // Use manual count if provided in the table, otherwise auto-count
+        int httpCount = info.getHttpSamplersCount();
         if (httpCount <= 0) {
-            logArea.append("WARNING: No samplers found in '" + info.getName() + "'. Assuming 1.\n");
-            httpCount = 1;
+            httpCount = countHttpSamplers(tg, guiPackage);
+            if (httpCount <= 0) {
+                logArea.append("WARNING: No samplers found in '" + info.getName() + "'. Assuming 1.\n");
+                httpCount = 1;
+            }
+            info.setHttpSamplersCount(httpCount);
         }
-        info.setHttpSamplersCount(httpCount);
 
-        double rpm = (double) info.getTargetRph() / 60.0;
+        double rpm = (double) info.getActualRph() / 60.0;
         double iterMin = info.getIterationDurationSec() / 60.0;
         
         double requiredThreads = (rpm * iterMin) / httpCount;
         int threads = Math.max(1, (int) Math.ceil(requiredThreads));
 
         info.setCalculatedThreads(threads);
-        info.setActualRph(info.getTargetRph());
-        info.setCalculatedIntervalMs(3600000.0 / Math.max(1, info.getTargetRph()));
+        info.setCalculatedIntervalMs(3600000.0 / Math.max(1, info.getActualRph()));
 
         updateThreadGroupProperties(tg, info, threads, holdSec, logArea);
 
         logArea.append(String.format("'%s': %d RPH (%.1f RPM) | %d samplers | %.1f min iter → %d threads\n",
-                info.getName(), info.getTargetRph(), rpm, httpCount, iterMin, threads));
+                info.getName(), info.getActualRph(), rpm, httpCount, iterMin, threads));
 
         double rpmPerSampler = rpm / httpCount;
         addOrUpdatePacingElements(info, tg, logArea, guiPackage, rpmPerSampler);
@@ -210,6 +213,7 @@ public class RPHCalculatorLogic {
     public static void syncThreadGroupTimings(ThreadGroupInfo info, JTextArea logArea) {
         TestElement tg = info.getThreadGroup();
         String className = tg.getClass().getName();
+        int threads = info.getCalculatedThreads();
         
         if (className.equals(ULTIMATE_TG_CLASS)) {
             JMeterProperty scheduleProp = tg.getProperty(ULTIMATE_TG_PROP);
@@ -218,6 +222,7 @@ public class RPHCalculatorLogic {
                 if (schedule.size() > 0 && schedule.get(0) instanceof CollectionProperty) {
                     CollectionProperty firstRow = (CollectionProperty) schedule.get(0);
                     if (firstRow.size() >= 5) {
+                        firstRow.set(0, new StringProperty("0", String.valueOf(threads)));
                         firstRow.set(2, new StringProperty("2", String.valueOf(info.getRampUpSec())));
                         firstRow.set(3, new StringProperty("3", String.valueOf(info.getHoldSec())));
                         firstRow.set(4, new StringProperty("4", String.valueOf(info.getRampDownSec())));
@@ -225,10 +230,21 @@ public class RPHCalculatorLogic {
                 }
             }
         } else if (tg instanceof ThreadGroup) {
+            tg.setProperty(new IntegerProperty(ThreadGroup.NUM_THREADS, threads));
             tg.setProperty(new IntegerProperty(ThreadGroup.RAMP_TIME, info.getRampUpSec()));
             tg.setProperty(new BooleanProperty(ThreadGroup.SCHEDULER, true));
             tg.setProperty(new LongProperty(ThreadGroup.DURATION, (long) info.getHoldSec()));
         }
+    }
+
+    public static void softCalculate(ThreadGroupInfo info) {
+        double rpm = (double) info.getTargetRph() / 60.0;
+        int httpCount = Math.max(1, info.getHttpSamplersCount());
+        double iterMin = info.getIterationDurationSec() / 60.0;
+        
+        double requiredThreads = (rpm * iterMin) / httpCount;
+        info.setCalculatedThreads(Math.max(1, (int) Math.ceil(requiredThreads)));
+        info.setCalculatedIntervalMs(3600000.0 / Math.max(1, info.getTargetRph()));
     }
 
     private static void updateThreadGroupProperties(TestElement tg, ThreadGroupInfo info, int threads, int holdSec, JTextArea logArea) {
