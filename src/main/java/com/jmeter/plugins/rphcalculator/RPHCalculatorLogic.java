@@ -37,71 +37,89 @@ public class RPHCalculatorLogic {
     private static final String PACING_TIMER_NAME = "Pacing Timer";
     private static final String TARGET_RPH_VAR_PREFIX = "rph.target.";
     private static final String ITERATION_DUR_VAR_PREFIX = "rph.duration.";
+    private static final String ACTUAL_RPH_VAR_PREFIX = "rph.actual.";
+    private static final String THREADS_VAR_PREFIX = "rph.threads.";
+    private static final String SAMPLERS_VAR_PREFIX = "rph.samplers.";
+
 
     public static void calculateForward(ThreadGroupInfo info, JTextArea logArea, GuiPackage guiPackage, int holdSec) {
         TestElement tg = info.getThreadGroup();
         
-        // Always recount samplers from tree to be sure we use latest structure
-        int actualSamplers = countHttpSamplers(tg, guiPackage);
-        if (actualSamplers > 0) {
-            info.setHttpSamplersCount(actualSamplers);
+        if (info.getHttpSamplersCount() <= 0) {
+            int actualSamplers = countHttpSamplers(tg, guiPackage);
+            if (actualSamplers > 0) {
+                info.setHttpSamplersCount(actualSamplers);
+            }
         }
         
-        // Ensure softCalculate uses current Actual RPH and current samplers
         softCalculate(info);
 
         int threads = info.getCalculatedThreads();
         int httpCount = Math.max(1, info.getHttpSamplersCount());
 
         double rpm = (double) info.getActualRph() / 60.0;
-        double iterMin = info.getIterationDurationSec() / 60.0;
 
         updateThreadGroupProperties(tg, info, threads, holdSec, logArea);
 
-        logArea.append(String.format("'%s': %d RPH (%.1f RPM) | %d samplers | %.1f min iter → %d threads\n",
-                info.getName(), info.getActualRph(), rpm, httpCount, iterMin, threads));
+        logArea.append(String.format("'%s': %d RPH (%.1f RPM) | %d samplers | %.1fs iter → %d threads\n",
+                info.getName(), info.getActualRph(), rpm, httpCount, info.getIterationDurationSec(), threads));
 
-        double rpmPerSampler = rpm / httpCount;
-        addOrUpdatePacingElements(info, tg, logArea, guiPackage, rpmPerSampler);
+        addOrUpdatePacingElements(info, tg, logArea, guiPackage, rpm);
     }
 
-    public static void saveTargetRphToVariables(ThreadGroupInfo info, GuiPackage guiPackage) {
-        String varName = TARGET_RPH_VAR_PREFIX + info.getName().replaceAll("[^a-zA-Z0-9.-]", "_");
-        
-        List<JMeterTreeNode> udvNodes = guiPackage.getTreeModel().getNodesOfType(Arguments.class);
-        Arguments udv;
-        JMeterTreeNode nodeToUpdate;
+    public static void saveToVariables(ThreadGroupInfo info, GuiPackage guiPackage) {
+        String baseName = info.getName().replaceAll("[^a-zA-Z0-9.-]", "_");
 
-        if (udvNodes.isEmpty()) {
+        JMeterTreeNode testPlanNode = (JMeterTreeNode) guiPackage.getTreeModel().getRoot();
+        JMeterTreeNode udvNode = null;
+        Arguments udv = null;
+
+        for (int i = 0; i < testPlanNode.getChildCount(); i++) {
+            JMeterTreeNode childNode = (JMeterTreeNode) testPlanNode.getChildAt(i);
+            if (childNode.getTestElement() instanceof Arguments) {
+                udvNode = childNode;
+                udv = (Arguments) udvNode.getTestElement();
+                break;
+            }
+        }
+
+        if (udvNode == null) {
+            List<JMeterTreeNode> udvNodes = guiPackage.getTreeModel().getNodesOfType(Arguments.class);
+            if (!udvNodes.isEmpty()) {
+                udvNode = udvNodes.get(0);
+                udv = (Arguments) udvNode.getTestElement();
+            }
+        }
+
+        if (udvNode == null) {
             udv = new Arguments();
-            udv.setName("User Defined Variables (RPH Targets)");
+            udv.setName("User Defined Variables (RPH Plugin)");
             udv.setProperty(TestElement.GUI_CLASS, ArgumentsPanel.class.getName());
             udv.setProperty(TestElement.TEST_CLASS, Arguments.class.getName());
             try {
-                JMeterTreeNode testPlanNode = (JMeterTreeNode) guiPackage.getTreeModel().getRoot();
-                nodeToUpdate = guiPackage.getTreeModel().addComponent(udv, testPlanNode);
+                udvNode = guiPackage.getTreeModel().addComponent(udv, testPlanNode);
             } catch (IllegalUserActionException e) {
-                log.error("Failed to create UDV for RPH Targets", e);
+                log.error("Failed to create UDV for RPH Plugin", e);
                 return;
             }
-        } else {
-            nodeToUpdate = udvNodes.get(0);
-            udv = (Arguments) nodeToUpdate.getTestElement();
         }
 
-        // Update existing or add new
-        udv.removeArgument(varName);
-        udv.addArgument(varName, String.valueOf(info.getTargetRph()));
-        
-        String durVarName = ITERATION_DUR_VAR_PREFIX + info.getName().replaceAll("[^a-zA-Z0-9.-]", "_");
-        udv.removeArgument(durVarName);
-        udv.addArgument(durVarName, String.valueOf(info.getIterationDurationSec()));
+        setUdvValue(udv, TARGET_RPH_VAR_PREFIX + baseName, String.valueOf(info.getTargetRph()));
+        setUdvValue(udv, ACTUAL_RPH_VAR_PREFIX + baseName, String.valueOf(info.getActualRph()));
+        setUdvValue(udv, ITERATION_DUR_VAR_PREFIX + baseName, String.valueOf(info.getIterationDurationSec()));
+        setUdvValue(udv, THREADS_VAR_PREFIX + baseName, String.valueOf(info.getCalculatedThreads()));
+        setUdvValue(udv, SAMPLERS_VAR_PREFIX + baseName, String.valueOf(info.getHttpSamplersCount()));
 
-        guiPackage.getTreeModel().nodeChanged(nodeToUpdate);
+        guiPackage.getTreeModel().nodeChanged(udvNode);
     }
 
-    private static int loadTargetRphFromVariables(String tgName, GuiPackage guiPackage) {
-        String varName = TARGET_RPH_VAR_PREFIX + tgName.replaceAll("[^a-zA-Z0-9.-]", "_");
+    private static void setUdvValue(Arguments udv, String key, String value) {
+        udv.removeArgument(key);
+        udv.addArgument(key, value);
+    }
+
+    private static int loadVariableAsInt(String prefix, String tgName, GuiPackage guiPackage) {
+        String varName = prefix + tgName.replaceAll("[^a-zA-Z0-9.-]", "_");
         List<JMeterTreeNode> udvNodes = guiPackage.getTreeModel().getNodesOfType(Arguments.class);
         for (JMeterTreeNode node : udvNodes) {
             Arguments udv = (Arguments) node.getTestElement();
@@ -110,15 +128,15 @@ public class RPHCalculatorLogic {
                 try {
                     return Integer.parseInt(value);
                 } catch (NumberFormatException e) {
-                    log.warn("Could not parse target RPH from variable {}", varName);
+                    log.warn("Could not parse integer from variable {}", varName);
                 }
             }
         }
-        return 0;
+        return -1;
     }
 
-    private static double loadIterationDurationFromVariables(String tgName, GuiPackage guiPackage) {
-        String varName = ITERATION_DUR_VAR_PREFIX + tgName.replaceAll("[^a-zA-Z0-9.-]", "_");
+    private static double loadVariableAsDouble(String prefix, String tgName, GuiPackage guiPackage) {
+        String varName = prefix + tgName.replaceAll("[^a-zA-Z0-9.-]", "_");
         List<JMeterTreeNode> udvNodes = guiPackage.getTreeModel().getNodesOfType(Arguments.class);
         for (JMeterTreeNode node : udvNodes) {
             Arguments udv = (Arguments) node.getTestElement();
@@ -127,11 +145,11 @@ public class RPHCalculatorLogic {
                 try {
                     return Double.parseDouble(value);
                 } catch (NumberFormatException e) {
-                    log.warn("Could not parse duration from variable {}", varName);
+                    log.warn("Could not parse double from variable {}", varName);
                 }
             }
         }
-        return 10.0;
+        return -1.0;
     }
 
     public static void generateStepUpSchedule(ThreadGroupInfo info, JTextArea logArea, GuiPackage guiPackage,
@@ -199,8 +217,7 @@ public class RPHCalculatorLogic {
         info.setCalculatedIntervalMs(3600000.0 / Math.max(1, Math.round(maxRph)));
 
         double maxRpm = maxRph / 60.0;
-        int httpCountFinal = Math.max(1, info.getHttpSamplersCount());
-        addOrUpdatePacingElements(info, tg, logArea, guiPackage, maxRpm / httpCountFinal);
+        addOrUpdatePacingElements(info, tg, logArea, guiPackage, maxRpm);
 
         logArea.append(String.format("'%s': Step-up applied. Max %.0f RPH → Max %d threads. Rows: %d/%d\n",
                 info.getName(), maxRph, previousThreads, rowsAdded, steps));
@@ -284,15 +301,13 @@ public class RPHCalculatorLogic {
         timer.setProperty(TestElement.GUI_CLASS, TestBeanGUI.class.getName());
         timer.setProperty(TestElement.TEST_CLASS, ConstantThroughputTimer.class.getName());
         timer.setName(PACING_TIMER_NAME);
-        // Mode 4: All active threads in current thread group (shared)
         timer.setProperty(new IntegerProperty(ConstantThroughputTimer.CALC_MODE, 4));
-        // Correct way to set a double property in JMeter
         timer.setProperty(new DoubleProperty(ConstantThroughputTimer.THROUGHPUT, rpm));
         timer.setEnabled(true);
         return timer;
     }
 
-    private static void addOrUpdatePacingElements(ThreadGroupInfo info, TestElement tg, JTextArea logArea, GuiPackage guiPackage, double rpm) {
+    public static void addOrUpdatePacingElements(ThreadGroupInfo info, TestElement tg, JTextArea logArea, GuiPackage guiPackage, double rpm) {
         JMeterTreeNode parentNode = guiPackage.getTreeModel().getNodeOf(tg);
         if (parentNode == null) {
             log.error("Could not find tree node for Thread Group: {}", tg.getName());
@@ -308,7 +323,6 @@ public class RPHCalculatorLogic {
 
         try {
             if (timer != null) {
-                // Correct way to set a double property in JMeter
                 timer.setProperty(new DoubleProperty(ConstantThroughputTimer.THROUGHPUT, rpm));
                 logArea.append("  Updated existing Pacing Timer.\n");
             } else if (pacingActionNode != null) {
@@ -337,7 +351,6 @@ public class RPHCalculatorLogic {
 
         info.setHasTimer(true);
 
-        // Notify tree and update GUI
         guiPackage.getTreeModel().nodeChanged(parentNode);
         if (guiPackage.getCurrentNode() == parentNode) {
             guiPackage.getCurrentGui().configure(tg);
@@ -349,56 +362,64 @@ public class RPHCalculatorLogic {
         TestElement tg = info.getThreadGroup();
         restoreThreadGroupProperties(tg, info);
 
-        ConstantThroughputTimer timer = findPacingTimer(tg, guiPackage);
-        
-        int httpCount = countHttpSamplers(tg, guiPackage);
-        info.setHttpSamplersCount(httpCount);
-        int calcHttpCount = Math.max(1, httpCount);
+        // Load all saved values from User Defined Variables
+        int storedTarget = loadVariableAsInt(TARGET_RPH_VAR_PREFIX, info.getName(), guiPackage);
+        if (storedTarget != -1) info.setTargetRph(storedTarget);
 
-        int storedTarget = loadTargetRphFromVariables(info.getName(), guiPackage);
-        if (storedTarget > 0) {
-            info.setTargetRph(storedTarget);
-        }
+        int storedActual = loadVariableAsInt(ACTUAL_RPH_VAR_PREFIX, info.getName(), guiPackage);
+        if (storedActual != -1) info.setActualRph(storedActual);
+
+        double storedDur = loadVariableAsDouble(ITERATION_DUR_VAR_PREFIX, info.getName(), guiPackage);
+        if (storedDur != -1.0) info.setIterationDurationSec(storedDur);
+
+        int storedThreads = loadVariableAsInt(THREADS_VAR_PREFIX, info.getName(), guiPackage);
+        if (storedThreads != -1) info.setCalculatedThreads(storedThreads);
+
+        int storedSamplers = loadVariableAsInt(SAMPLERS_VAR_PREFIX, info.getName(), guiPackage);
+        if (storedSamplers != -1) info.setHttpSamplersCount(storedSamplers);
         
-        double storedDur = loadIterationDurationFromVariables(info.getName(), guiPackage);
-        info.setIterationDurationSec(storedDur);
+        if (info.getHttpSamplersCount() <= 0) {
+            info.setHttpSamplersCount(countHttpSamplers(tg, guiPackage));
+        }
+
+        // If we have a stored Actual RPH, use it directly — don't re-derive from timer
+        if (info.getActualRph() > 0) {
+            info.setCalculatedIntervalMs(3600000.0 / info.getActualRph());
+            ConstantThroughputTimer timer = findPacingTimer(tg, guiPackage);
+            info.setHasTimer(timer != null);
+            logArea.append(String.format("'%s': Loaded from variables. Target=%d, Actual=%d RPH\n",
+                    info.getName(), info.getTargetRph(), info.getActualRph()));
+            return;
+        }
+
+        // Fallback: derive from pacing timer (first time, no saved values yet)
+        ConstantThroughputTimer timer = findPacingTimer(tg, guiPackage);
 
         if (timer != null) {
             double rpm = timer.getPropertyAsDouble(ConstantThroughputTimer.THROUGHPUT);
             int mode = timer.getPropertyAsInt(ConstantThroughputTimer.CALC_MODE, 0);
             
             double totalRph;
-            if (mode == 0) { // This thread only
-                totalRph = rpm * 60 * info.getCalculatedThreads() * calcHttpCount;
-            } else { // All active threads (various sharing modes)
-                totalRph = rpm * 60 * calcHttpCount;
+            if (mode >= 2 && mode <= 4) {
+                totalRph = rpm * 60;
+            } else {
+                totalRph = rpm * 60 * info.getCalculatedThreads();
             }
             
             int rph = (int) Math.round(totalRph);
             
-            // Re-calculate threads if needed for display/info
-            if (rph > 0 && info.getIterationDurationSec() > 0) {
-                double rpmTarget = (double) rph / 60.0;
-                double requiredThreads = (rpmTarget * (info.getIterationDurationSec() / 60.0)) / calcHttpCount;
-                info.setCalculatedThreads(Math.max(1, (int) Math.ceil(requiredThreads)));
-            }
-
-            if (info.getTargetRph() <= 0) {
-                info.setTargetRph(rph);
-            }
+            if (info.getTargetRph() <= 0) info.setTargetRph(rph);
             info.setActualRph(rph);
             info.setCalculatedIntervalMs(3600000.0 / Math.max(1, rph));
             info.setHasTimer(true);
             logArea.append(String.format("'%s': Reversed from Pacing Timer. Current: %d RPH (%.1f RPM)\n",
                     info.getName(), info.getActualRph(), rpm));
         } else {
-            // If no timer, calculate the maximum possible RPH at current thread count
             if (info.getCalculatedThreads() > 0 && info.getIterationDurationSec() > 0) {
+                int calcHttpCount = Math.max(1, info.getHttpSamplersCount());
                 double maxRph = (double) info.getCalculatedThreads() * 3600.0 * calcHttpCount / info.getIterationDurationSec();
                 int rph = (int) Math.round(maxRph);
-                if (info.getTargetRph() <= 0) {
-                    info.setTargetRph(rph);
-                }
+                if (info.getTargetRph() <= 0) info.setTargetRph(rph);
                 info.setActualRph(rph);
                 info.setCalculatedIntervalMs(3600000.0 / Math.max(1, rph));
             } else {
@@ -498,10 +519,7 @@ public class RPHCalculatorLogic {
     public static int countHttpSamplers(TestElement parent, GuiPackage guiPackage) {
         JMeterTreeNode parentNode = guiPackage.getTreeModel().getNodeOf(parent);
         if (parentNode == null) return 0;
-        int count = countHttpSamplersInNode(parentNode);
-        // We use log.info here, but if we want it in the plugin's JTextArea, 
-        // we'd need to pass the JTextArea here. For now, let's at least ensure it's calculated.
-        return count;
+        return countHttpSamplersInNode(parentNode);
     }
 
     private static int countHttpSamplersInNode(JMeterTreeNode node) {
@@ -510,7 +528,6 @@ public class RPHCalculatorLogic {
             JMeterTreeNode child = (JMeterTreeNode) node.getChildAt(i);
             TestElement te = child.getTestElement();
             
-            // Skip disabled elements along with their whole subtree
             if (!te.isEnabled()) {
                 continue;
             }
@@ -521,7 +538,6 @@ public class RPHCalculatorLogic {
                 ModuleController mc = (ModuleController) te;
                 JMeterTreeNode targetNode = (JMeterTreeNode) mc.getSelectedNode();
                 if (targetNode != null) {
-                    // Recursive count in the target fragment/node
                     count += countHttpSamplersInNode(targetNode);
                 }
             }
