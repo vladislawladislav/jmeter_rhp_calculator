@@ -49,7 +49,7 @@ public class RPHCalculatorFrame extends JFrame {
     public RPHCalculatorFrame(GuiPackage guiPackage) {
         this.guiPackage = guiPackage;
         setTitle("RPH Test Plan Generator");
-        setSize(1200, 600);
+        setSize(1200, 700);
         setLocationRelativeTo(guiPackage.getMainFrame());
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         initComponents();
@@ -81,7 +81,7 @@ public class RPHCalculatorFrame extends JFrame {
 
     private void initComponents() {
         setLayout(new BorderLayout(10, 10));
-        
+
         JPanel headerPanel = new JPanel(new BorderLayout());
         JLabel titleLabel = new JLabel(" RPH Calculator & Thread Group Configurator");
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
@@ -92,25 +92,23 @@ public class RPHCalculatorFrame extends JFrame {
         headerPanel.add(versionLabel, BorderLayout.EAST);
         add(headerPanel, BorderLayout.NORTH);
 
-        JTabbedPane tabbedPane = new JTabbedPane();
-        tabbedPane.addTab("1. Base Configuration", createBaseConfigPanel());
-        tabbedPane.addTab("2. Stability Test", createStabilityTestPanel());
-        tabbedPane.addTab("3. Step-up Test", createStepUpTestPanel());
-
-        logArea = new JTextArea(8, 80);
-        logArea.setEditable(false);
-        logArea.setFont(new Font("Monospaced", Font.PLAIN, 11));
-        JScrollPane logScroll = new JScrollPane(logArea);
-
         JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
         mainPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-        mainPanel.add(tabbedPane, BorderLayout.CENTER);
-        mainPanel.add(logScroll, BorderLayout.SOUTH);
+
+        mainPanel.add(createTableAndControlsPanel(), BorderLayout.CENTER);
+
+        logArea = new JTextArea(6, 80);
+        logArea.setEditable(false);
+        logArea.setFont(new Font("Monospaced", Font.PLAIN, 11));
+        mainPanel.add(new JScrollPane(logArea), BorderLayout.SOUTH);
+
         add(mainPanel, BorderLayout.CENTER);
     }
 
-    private JPanel createBaseConfigPanel() {
+    private JPanel createTableAndControlsPanel() {
         JPanel panel = new JPanel(new BorderLayout(10, 10));
+
+        // Table
         tableModel = new DefaultTableModel(COLUMN_NAMES, 0) {
             @Override
             public boolean isCellEditable(int row, int col) {
@@ -122,8 +120,9 @@ public class RPHCalculatorFrame extends JFrame {
         table.getTableHeader().setReorderingAllowed(false);
         panel.add(new JScrollPane(table), BorderLayout.CENTER);
 
+        // Buttons row
         JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
-        
+
         JButton saveOnlyButton = new JButton("Save & Sync");
         saveOnlyButton.setToolTipText("Save Target RPH, Actual RPH, Iteration Duration to UDV and apply ramp-up/hold timings");
         saveOnlyButton.addActionListener(e -> saveSettingsOnly());
@@ -133,13 +132,95 @@ public class RPHCalculatorFrame extends JFrame {
         refreshButton.setToolTipText("Reload all Thread Groups from the test plan and UDV");
         refreshButton.addActionListener(e -> refreshTable());
         controlPanel.add(refreshButton);
-        
+
         JButton refreshSamplersButton = new JButton("Refresh Samplers");
         refreshSamplersButton.setToolTipText("Recalculate HTTP samplers for selected rows");
         refreshSamplersButton.addActionListener(e -> refreshSamplers());
         controlPanel.add(refreshSamplersButton);
 
-        panel.add(controlPanel, BorderLayout.SOUTH);
+        panel.add(controlPanel, BorderLayout.NORTH);
+
+        // Stability + Step-up side by side
+        JPanel generatorsPanel = new JPanel(new GridLayout(1, 2, 10, 0));
+        generatorsPanel.add(createStabilityPanel());
+        generatorsPanel.add(createStepUpPanel());
+        panel.add(generatorsPanel, BorderLayout.SOUTH);
+
+        return panel;
+    }
+
+    private JPanel createStabilityPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("Stability Test"));
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(3, 5, 3, 5);
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        gbc.gridx = 0; gbc.gridy = 0;
+        panel.add(new JLabel("Load % of Base:"), gbc);
+        gbc.gridx = 1;
+        loadPercentageField = new JTextField(8);
+        panel.add(loadPercentageField, gbc);
+
+        gbc.gridx = 2;
+        panel.add(new JLabel("Duration (sec):"), gbc);
+        gbc.gridx = 3;
+        durationField = new JTextField(8);
+        panel.add(durationField, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 4; gbc.anchor = GridBagConstraints.CENTER;
+        JButton generateStabilityButton = new JButton("Generate & Apply Stability Test");
+        generateStabilityButton.addActionListener(e -> generateStabilityTest());
+        panel.add(generateStabilityButton, gbc);
+
+        return panel;
+    }
+
+    private JPanel createStepUpPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("Step-up (Max Search)"));
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(3, 5, 3, 5);
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        gbc.gridx = 0; gbc.gridy = 0;
+        panel.add(new JLabel("Steps:"), gbc);
+        gbc.gridx = 1;
+        numStepsField = new JTextField(5);
+        panel.add(numStepsField, gbc);
+
+        gbc.gridx = 2;
+        panel.add(new JLabel("Step Dur (sec):"), gbc);
+        gbc.gridx = 3;
+        stepDurationField = new JTextField(5);
+        panel.add(stepDurationField, gbc);
+
+        gbc.gridx = 4;
+        panel.add(new JLabel("Start %:"), gbc);
+        gbc.gridx = 5;
+        initialLoadField = new JTextField(5);
+        panel.add(initialLoadField, gbc);
+
+        gbc.gridy = 1;
+        gbc.gridx = 0;
+        panel.add(new JLabel("Increment %:"), gbc);
+        gbc.gridx = 1;
+        incrementField = new JTextField(5);
+        panel.add(incrementField, gbc);
+
+        gbc.gridx = 2;
+        panel.add(new JLabel("Ramp-up (sec):"), gbc);
+        gbc.gridx = 3;
+        stepRampUpField = new JTextField(5);
+        panel.add(stepRampUpField, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 2; gbc.gridwidth = 6; gbc.anchor = GridBagConstraints.CENTER;
+        JButton generateStepUpButton = new JButton("Generate & Apply Step-up Test");
+        generateStepUpButton.addActionListener(e -> generateStepUpTest());
+        panel.add(generateStepUpButton, gbc);
+
         return panel;
     }
 
@@ -182,80 +263,6 @@ public class RPHCalculatorFrame extends JFrame {
         }
     }
 
-    private JPanel createStabilityTestPanel() {
-        JPanel panel = new JPanel(new GridBagLayout());
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(5, 5, 5, 5);
-        gbc.anchor = GridBagConstraints.WEST;
-
-        gbc.gridx = 0; gbc.gridy = 0;
-        panel.add(new JLabel("Load Percentage (% of Base):"), gbc);
-        gbc.gridx = 1;
-        loadPercentageField = new JTextField(10);
-        panel.add(loadPercentageField, gbc);
-
-        gbc.gridx = 0; gbc.gridy = 1;
-        panel.add(new JLabel("Test Duration (seconds):"), gbc);
-        gbc.gridx = 1;
-        durationField = new JTextField(10);
-        panel.add(durationField, gbc);
-
-        gbc.gridx = 0; gbc.gridy = 2; gbc.gridwidth = 2; gbc.anchor = GridBagConstraints.CENTER;
-        JButton generateStabilityButton = new JButton("Generate & Apply Stability Test");
-        generateStabilityButton.addActionListener(e -> generateStabilityTest());
-        panel.add(generateStabilityButton, gbc);
-
-        gbc.gridy = 3; gbc.weighty = 1.0;
-        panel.add(new JPanel(), gbc);
-        return panel;
-    }
-
-    private JPanel createStepUpTestPanel() {
-        JPanel panel = new JPanel(new GridBagLayout());
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(5, 5, 5, 5);
-        gbc.anchor = GridBagConstraints.WEST;
-
-        gbc.gridx = 0; gbc.gridy = 0;
-        panel.add(new JLabel("Number of Steps:"), gbc);
-        gbc.gridx = 1;
-        numStepsField = new JTextField(10);
-        panel.add(numStepsField, gbc);
-
-        gbc.gridx = 0; gbc.gridy++;
-        panel.add(new JLabel("Step Duration (seconds):"), gbc);
-        gbc.gridx = 1;
-        stepDurationField = new JTextField(10);
-        panel.add(stepDurationField, gbc);
-
-        gbc.gridx = 0; gbc.gridy++;
-        panel.add(new JLabel("Initial Load (% of Base):"), gbc);
-        gbc.gridx = 1;
-        initialLoadField = new JTextField(10);
-        panel.add(initialLoadField, gbc);
-
-        gbc.gridx = 0; gbc.gridy++;
-        panel.add(new JLabel("Load Increment per Step (%):"), gbc);
-        gbc.gridx = 1;
-        incrementField = new JTextField(10);
-        panel.add(incrementField, gbc);
-        
-        gbc.gridx = 0; gbc.gridy++;
-        panel.add(new JLabel("Ramp-up per Step (seconds):"), gbc);
-        gbc.gridx = 1;
-        stepRampUpField = new JTextField(10);
-        panel.add(stepRampUpField, gbc);
-
-        gbc.gridx = 0; gbc.gridy++; gbc.gridwidth = 2; gbc.anchor = GridBagConstraints.CENTER;
-        JButton generateStepUpButton = new JButton("Generate & Apply Step-up Test");
-        generateStepUpButton.addActionListener(e -> generateStepUpTest());
-        panel.add(generateStepUpButton, gbc);
-        
-        gbc.gridy++; gbc.weighty = 1.0;
-        panel.add(new JPanel(), gbc);
-        return panel;
-    }
-
     private void refreshTable() {
         guiPackage.updateCurrentNode();
 
@@ -274,7 +281,7 @@ public class RPHCalculatorFrame extends JFrame {
         for (TestElement tg : groups) {
             ThreadGroupInfo info = new ThreadGroupInfo(tg, tg.getName());
             RPHCalculatorLogic.calculateReverse(info, logArea, guiPackage);
-            
+
             threadGroupInfos.add(info);
             tableModel.addRow(new Object[]{
                     info.getName(), info.getTargetRph(), info.getActualRph(), info.getIterationDurationSec(),
@@ -300,16 +307,16 @@ public class RPHCalculatorFrame extends JFrame {
                 ThreadGroupInfo info = threadGroupInfos.get(rowIdx);
                 try {
                     updateInfoFromTable(info, rowIdx);
-                    
+
                     int originalTarget = info.getTargetRph();
                     int baseForCalculation = originalTarget > 0 ? originalTarget : info.getActualRph();
-                    
+
                     int stabilityTargetRph = (int) Math.round(baseForCalculation * (loadPct / 100.0));
                     info.setActualRph(stabilityTargetRph);
-                    
+
                     RPHCalculatorLogic.calculateForward(info, logArea, guiPackage, duration);
                     RPHCalculatorLogic.saveToVariables(info, guiPackage);
-                    
+
                     info.setTargetRph(originalTarget);
                     info.setActualRph(stabilityTargetRph);
                     info.setHoldSec(duration);
@@ -361,7 +368,7 @@ public class RPHCalculatorFrame extends JFrame {
     private int[] getSelectedRowsWithWarning() {
         int[] selectedRows = table.getSelectedRows();
         if (selectedRows.length == 0) {
-            JOptionPane.showMessageDialog(this, "Please select at least one Thread Group from the table in the 'Base Configuration' tab.", "No Rows Selected", JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Please select at least one Thread Group from the table.", "No Rows Selected", JOptionPane.WARNING_MESSAGE);
         }
         return selectedRows;
     }

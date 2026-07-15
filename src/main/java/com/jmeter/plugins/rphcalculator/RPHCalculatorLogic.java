@@ -400,7 +400,7 @@ public class RPHCalculatorLogic {
             int mode = timer.getPropertyAsInt(ConstantThroughputTimer.CALC_MODE, 0);
             
             double totalRph;
-            if (mode >= 2 && mode <= 4) {
+            if (mode == 3 || mode == 4) {
                 totalRph = rpm * 60;
             } else {
                 totalRph = rpm * 60 * info.getCalculatedThreads();
