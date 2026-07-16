@@ -44,25 +44,25 @@ public class RPHCalculatorLogic {
 
     public static void calculateForward(ThreadGroupInfo info, JTextArea logArea, GuiPackage guiPackage, int holdSec) {
         TestElement tg = info.getThreadGroup();
-        
+
         if (info.getHttpSamplersCount() <= 0) {
             int actualSamplers = countHttpSamplers(tg, guiPackage);
             if (actualSamplers > 0) {
                 info.setHttpSamplersCount(actualSamplers);
             }
         }
-        
+
         softCalculate(info);
 
         int threads = info.getCalculatedThreads();
-        int httpCount = Math.max(1, info.getHttpSamplersCount());
 
-        double rpm = (double) info.getActualRph() / 60.0;
+        double rpm = (double) info.getActualRph() / 60.0 / Math.max(1, info.getHttpSamplersCount());
+        double pacingSec = 3600.0 / (info.getActualRph() / (double) threads);
 
         updateThreadGroupProperties(tg, info, threads, holdSec, logArea);
 
-        logArea.append(String.format("'%s': %d RPH (%.1f RPM) | %d samplers | %.1fs iter → %d threads\n",
-                info.getName(), info.getActualRph(), rpm, httpCount, info.getIterationDurationSec(), threads));
+        logArea.append(String.format("'%s': %d RPH (%.2f opm) | pacing: %.4fs | %.1fs iter → %d threads\n",
+                info.getName(), info.getActualRph(), rpm, pacingSec, info.getIterationDurationSec(), threads));
 
         addOrUpdatePacingElements(info, tg, logArea, guiPackage, rpm);
     }
@@ -183,9 +183,7 @@ public class RPHCalculatorLogic {
             double currentRph = baseRph * (currentLoadPct / 100.0);
             maxRph = Math.max(maxRph, currentRph);
 
-            double currentRpm = currentRph / 60.0;
-            int httpCount = Math.max(1, info.getHttpSamplersCount());
-            double requiredThreads = (currentRpm * (info.getIterationDurationSec() / 60.0)) / httpCount;
+            double requiredThreads = (currentRph * info.getIterationDurationSec()) / 3600.0;
             int currentTotalThreads = Math.max(1, (int) Math.ceil(requiredThreads));
 
             int threadsToAdd = currentTotalThreads - previousThreads;
@@ -216,18 +214,19 @@ public class RPHCalculatorLogic {
         info.setActualRph((int) Math.round(maxRph));
         info.setCalculatedIntervalMs(3600000.0 / Math.max(1, Math.round(maxRph)));
 
-        double maxRpm = maxRph / 60.0;
+        double maxRpm = maxRph / 60.0 / Math.max(1, info.getHttpSamplersCount());
         addOrUpdatePacingElements(info, tg, logArea, guiPackage, maxRpm);
 
-        logArea.append(String.format("'%s': Step-up applied. Max %.0f RPH → Max %d threads. Rows: %d/%d\n",
-                info.getName(), maxRph, previousThreads, rowsAdded, steps));
+        double pacingSec = 3600.0 / (maxRph / (double) previousThreads);
+        logArea.append(String.format("'%s': Step-up applied. Max %.1f RPH (%.2f opm) | pacing %.4fs → Max %d threads. Rows: %d/%d\n",
+                info.getName(), maxRph, maxRpm, pacingSec, previousThreads, rowsAdded, steps));
     }
 
     public static void syncThreadGroupTimings(ThreadGroupInfo info, JTextArea logArea) {
         TestElement tg = info.getThreadGroup();
         String className = tg.getClass().getName();
         int threads = info.getCalculatedThreads();
-        
+
         if (className.equals(ULTIMATE_TG_CLASS)) {
             JMeterProperty scheduleProp = tg.getProperty(ULTIMATE_TG_PROP);
             if (scheduleProp instanceof CollectionProperty) {
@@ -251,11 +250,7 @@ public class RPHCalculatorLogic {
     }
 
     public static void softCalculate(ThreadGroupInfo info) {
-        double rpm = (double) info.getActualRph() / 60.0;
-        int httpCount = Math.max(1, info.getHttpSamplersCount());
-        double iterMin = info.getIterationDurationSec() / 60.0;
-        
-        double requiredThreads = (rpm * iterMin) / httpCount;
+        double requiredThreads = (info.getActualRph() * info.getIterationDurationSec()) / 3600.0;
         info.setCalculatedThreads(Math.max(1, (int) Math.ceil(requiredThreads)));
         info.setCalculatedIntervalMs(3600000.0 / Math.max(1, info.getActualRph()));
     }
@@ -301,7 +296,7 @@ public class RPHCalculatorLogic {
         timer.setProperty(TestElement.GUI_CLASS, TestBeanGUI.class.getName());
         timer.setProperty(TestElement.TEST_CLASS, ConstantThroughputTimer.class.getName());
         timer.setName(PACING_TIMER_NAME);
-        timer.setProperty(new IntegerProperty(ConstantThroughputTimer.CALC_MODE, 4));
+        timer.setProperty(new IntegerProperty(ConstantThroughputTimer.CALC_MODE, 2));
         timer.setProperty(new DoubleProperty(ConstantThroughputTimer.THROUGHPUT, rpm));
         timer.setEnabled(true);
         return timer;
@@ -324,6 +319,7 @@ public class RPHCalculatorLogic {
         try {
             if (timer != null) {
                 timer.setProperty(new DoubleProperty(ConstantThroughputTimer.THROUGHPUT, rpm));
+                timer.setProperty(new IntegerProperty(ConstantThroughputTimer.CALC_MODE, 2));
                 logArea.append("  Updated existing Pacing Timer.\n");
             } else if (pacingActionNode != null) {
                 ConstantThroughputTimer newTimer = createNewPacingTimer(rpm);
@@ -337,7 +333,7 @@ public class RPHCalculatorLogic {
                 fca.setAction(TestAction.PAUSE);
                 fca.setDuration("0");
                 fca.setEnabled(true);
-                
+
                 JMeterTreeNode fcaNode = guiPackage.getTreeModel().addComponent(fca, parentNode);
 
                 ConstantThroughputTimer newTimer = createNewPacingTimer(rpm);
@@ -362,7 +358,6 @@ public class RPHCalculatorLogic {
         TestElement tg = info.getThreadGroup();
         restoreThreadGroupProperties(tg, info);
 
-        // Load all saved values from User Defined Variables
         int storedTarget = loadVariableAsInt(TARGET_RPH_VAR_PREFIX, info.getName(), guiPackage);
         if (storedTarget != -1) info.setTargetRph(storedTarget);
 
@@ -377,12 +372,11 @@ public class RPHCalculatorLogic {
 
         int storedSamplers = loadVariableAsInt(SAMPLERS_VAR_PREFIX, info.getName(), guiPackage);
         if (storedSamplers != -1) info.setHttpSamplersCount(storedSamplers);
-        
+
         if (info.getHttpSamplersCount() <= 0) {
             info.setHttpSamplersCount(countHttpSamplers(tg, guiPackage));
         }
 
-        // If we have a stored Actual RPH, use it directly — don't re-derive from timer
         if (info.getActualRph() > 0) {
             info.setCalculatedIntervalMs(3600000.0 / info.getActualRph());
             ConstantThroughputTimer timer = findPacingTimer(tg, guiPackage);
@@ -392,32 +386,30 @@ public class RPHCalculatorLogic {
             return;
         }
 
-        // Fallback: derive from pacing timer (first time, no saved values yet)
         ConstantThroughputTimer timer = findPacingTimer(tg, guiPackage);
 
         if (timer != null) {
             double rpm = timer.getPropertyAsDouble(ConstantThroughputTimer.THROUGHPUT);
             int mode = timer.getPropertyAsInt(ConstantThroughputTimer.CALC_MODE, 0);
-            
+
             double totalRph;
-            if (mode == 3 || mode == 4) {
-                totalRph = rpm * 60;
+            if (mode == 2 || mode == 3 || mode == 4) {
+                totalRph = rpm * 60 * Math.max(1, info.getHttpSamplersCount());
             } else {
-                totalRph = rpm * 60 * info.getCalculatedThreads();
+                totalRph = rpm * 60 * Math.max(1, info.getHttpSamplersCount()) * info.getCalculatedThreads();
             }
-            
+
             int rph = (int) Math.round(totalRph);
-            
+
             if (info.getTargetRph() <= 0) info.setTargetRph(rph);
             info.setActualRph(rph);
             info.setCalculatedIntervalMs(3600000.0 / Math.max(1, rph));
             info.setHasTimer(true);
-            logArea.append(String.format("'%s': Reversed from Pacing Timer. Current: %d RPH (%.1f RPM)\n",
+            logArea.append(String.format("'%s': Reversed from Pacing Timer. Current: %d RPH (%.2f opm)\n",
                     info.getName(), info.getActualRph(), rpm));
         } else {
             if (info.getCalculatedThreads() > 0 && info.getIterationDurationSec() > 0) {
-                int calcHttpCount = Math.max(1, info.getHttpSamplersCount());
-                double maxRph = (double) info.getCalculatedThreads() * 3600.0 * calcHttpCount / info.getIterationDurationSec();
+                double maxRph = (double) info.getCalculatedThreads() * 3600.0 / info.getIterationDurationSec();
                 int rph = (int) Math.round(maxRph);
                 if (info.getTargetRph() <= 0) info.setTargetRph(rph);
                 info.setActualRph(rph);
@@ -527,7 +519,7 @@ public class RPHCalculatorLogic {
         for (int i = 0; i < node.getChildCount(); i++) {
             JMeterTreeNode child = (JMeterTreeNode) node.getChildAt(i);
             TestElement te = child.getTestElement();
-            
+
             if (!te.isEnabled()) {
                 continue;
             }
