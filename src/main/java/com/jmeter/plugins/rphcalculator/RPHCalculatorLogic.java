@@ -67,7 +67,7 @@ public class RPHCalculatorLogic {
         addOrUpdatePacingElements(info, tg, logArea, guiPackage, rpm);
     }
 
-    public static void saveToVariables(ThreadGroupInfo info, GuiPackage guiPackage) {
+    public static boolean saveToVariables(ThreadGroupInfo info, GuiPackage guiPackage, JTextArea logArea) {
         String baseName = info.getName().replaceAll("[^a-zA-Z0-9.-]", "_");
 
         JMeterTreeNode testPlanNode = (JMeterTreeNode) guiPackage.getTreeModel().getRoot();
@@ -100,8 +100,23 @@ public class RPHCalculatorLogic {
                 udvNode = guiPackage.getTreeModel().addComponent(udv, testPlanNode);
             } catch (IllegalUserActionException e) {
                 log.error("Failed to create UDV for RPH Plugin", e);
-                return;
+                logArea.append("ERROR: Could not create User Defined Variables for '" + info.getName() + "': " + e.getMessage() + "\n");
+                return false;
+            } catch (Exception e) {
+                log.error("Unexpected error creating UDV for RPH Plugin", e);
+                logArea.append("ERROR: Unexpected error creating UDV for '" + info.getName() + "': " + e.getMessage() + "\n");
+                return false;
             }
+        }
+
+        if (udvNode == null) {
+            logArea.append("ERROR: User Defined Variables node was not created for '" + info.getName() + "'.\n");
+            return false;
+        }
+
+        if (udv == null) {
+            logArea.append("ERROR: User Defined Variables element is null for '" + info.getName() + "'.\n");
+            return false;
         }
 
         setUdvValue(udv, TARGET_RPH_VAR_PREFIX + baseName, String.valueOf(info.getTargetRph()));
@@ -111,6 +126,7 @@ public class RPHCalculatorLogic {
         setUdvValue(udv, SAMPLERS_VAR_PREFIX + baseName, String.valueOf(info.getHttpSamplersCount()));
 
         guiPackage.getTreeModel().nodeChanged(udvNode);
+        return true;
     }
 
     private static void setUdvValue(Arguments udv, String key, String value) {

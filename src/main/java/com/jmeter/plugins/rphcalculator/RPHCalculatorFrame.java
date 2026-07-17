@@ -235,7 +235,8 @@ public class RPHCalculatorFrame extends JFrame {
             ThreadGroupInfo info = threadGroupInfos.get(rowIdx);
             try {
                 updateInfoFromTable(info, rowIdx);
-                RPHCalculatorLogic.saveToVariables(info, guiPackage);
+                boolean saved = RPHCalculatorLogic.saveToVariables(info, guiPackage, logArea);
+                    if (!saved) continue;
                 RPHCalculatorLogic.syncThreadGroupTimings(info, logArea);
                 successCount++;
                 logArea.append("'" + info.getName() + "': Saved. Target=" + info.getTargetRph()
@@ -315,7 +316,8 @@ public class RPHCalculatorFrame extends JFrame {
                     info.setActualRph(stabilityTargetRph);
 
                     RPHCalculatorLogic.calculateForward(info, logArea, guiPackage, duration);
-                    RPHCalculatorLogic.saveToVariables(info, guiPackage);
+                    boolean saved = RPHCalculatorLogic.saveToVariables(info, guiPackage, logArea);
+                    if (!saved) continue;
 
                     info.setTargetRph(originalTarget);
                     info.setActualRph(stabilityTargetRph);
@@ -352,7 +354,8 @@ public class RPHCalculatorFrame extends JFrame {
                 try {
                     updateInfoFromTable(info, rowIdx);
                     RPHCalculatorLogic.generateStepUpSchedule(info, logArea, guiPackage, steps, stepDuration, initialLoad, increment, stepRampUp);
-                    RPHCalculatorLogic.saveToVariables(info, guiPackage);
+                    boolean saved = RPHCalculatorLogic.saveToVariables(info, guiPackage, logArea);
+                    if (!saved) continue;
                     updateTableFromInfo(info, rowIdx);
                     successCount++;
                 } catch (Exception e) {

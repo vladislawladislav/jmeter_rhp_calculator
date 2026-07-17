@@ -7,7 +7,7 @@
 
     <groupId>com.jmeter.plugins</groupId>
     <artifactId>rph-calculator-plugin</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.3</version>
     <packaging>jar</packaging>
 
     <name>RPH Calculator Plugin</name>
